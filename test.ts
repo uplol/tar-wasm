@@ -55,13 +55,5 @@ import initWasm, { StreamingTarPacker } from "./pkg/tar_wasm.js";
     console.log("done with second!");
   }
 
-  setTimeout(async () => {
-    await packer.finish();
-  }, 2000);
-
-  await new Promise((r) => {
-    setTimeout(r, 4000);
-  });
-
-  console.log("done");
+  await packer.finish();
 })();
