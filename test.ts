@@ -21,7 +21,7 @@ import initWasm, { StreamingTarPacker } from "./pkg/tar_wasm.js";
           `streamed ${chunk.length} bytes (${(
             (writtenBytes / totalBytes) *
             100
-          ).toFixed(0)}%)`
+          ).toFixed(0)}%) (${writtenBytes})`
         );
         await file.write(chunk);
       },
@@ -34,8 +34,34 @@ import initWasm, { StreamingTarPacker } from "./pkg/tar_wasm.js";
 
   const res = await fetch("https://www.everypixel.com/i/free_1.jpg");
   const size = parseInt(await res.headers.get("content-length")!)!;
-  console.log("downloading len", size);
+
+  const res2 = await fetch(
+    "https://media.discordapp.net/attachments/638480814887141386/865368782834499624/unknown.png"
+  );
+  const size2 = parseInt(await res2.headers.get("content-length")!)!;
+
   totalBytes = size;
-  await packer.add_file_stream("./cat.png", {}, size, res.body!);
-  console.log("done!");
+
+  console.log("downloading len", size);
+  await packer.addFileStream("./cat.jpg", {}, size, res.body!);
+  console.log("done with first!");
+
+  writtenBytes = 0;
+  totalBytes = size2;
+
+  {
+    console.log("downloading len", size2);
+    await packer.addFileStream("./dir/buildyboi.png", {}, size2, res2.body!);
+    console.log("done with second!");
+  }
+
+  setTimeout(async () => {
+    await packer.finish();
+  }, 2000);
+
+  await new Promise((r) => {
+    setTimeout(r, 4000);
+  });
+
+  console.log("done");
 })();

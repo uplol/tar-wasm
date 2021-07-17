@@ -16,9 +16,28 @@ mod streams_sys {
 #[wasm_bindgen(typescript_custom_section)]
 const ITAR_ENTRY_OPTS: &'static str = r#"
 interface ITarEntryOpts {
+    /*
+        The file mode this entry will be created with.
+        Note that this is the base10 variant of the value, not base8.
+        This defaults to 644 for files and 755 for directories.
+    */
     mode?: number,
+    /*
+        The mtime attribute to attach to this entry.
+        It should be in whole seconds since epoch, or a standard Unix timestamp.
+
+        Defaults to now.
+    */
     mtime?: number,
+    /*
+        If set, the uid to attribute with this file.
+        TAR unpackers will typically create the file with inherited uid/gid attributes.
+    */
     uid?: number,
+    /*
+        If set, the gid to attribute with this file.
+        TAR unpackers will typically create the file with inherited uid/gid attributes.
+    */
     gid?: number
 }
 "#;
@@ -48,7 +67,7 @@ impl TarAddOpts {
         }
         header.set_entry_type(entry_type);
         match entry_type {
-            EntryType::Regular => header.set_mode(self.mode.unwrap_or(0o664)),
+            EntryType::Regular => header.set_mode(self.mode.unwrap_or(0o644)),
             EntryType::Directory => header.set_mode(self.mode.unwrap_or(0o755)),
             _ => {
                 if let Some(mode) = self.mode {
@@ -73,12 +92,14 @@ impl StreamingTarPacker {
         Self { stream }
     }
 
+    /// Adds a directory to the tarball.
+    #[wasm_bindgen(js_name = "addDir")]
     pub fn add_dir(&mut self, path: String, opts: &ITarEntryOpts) -> js_sys::Promise {
         let opts: TarAddOpts = opts.into_serde().unwrap();
 
         let stream = self.stream.clone();
         wasm_bindgen_futures::future_to_promise(async move {
-            let mut header = tar::Header::new_old();
+            let mut header = tar::Header::new_ustar();
             header.set_path(path).unwrap();
             opts.extend_header(EntryType::dir(), &mut header);
 
@@ -91,6 +112,8 @@ impl StreamingTarPacker {
         })
     }
 
+    /// Adds a file to the tarball from a stream.
+    #[wasm_bindgen(js_name = "addFileStream")]
     pub fn add_file_stream(
         &mut self,
         path: String,
@@ -100,9 +123,10 @@ impl StreamingTarPacker {
     ) -> js_sys::Promise {
         let opts: TarAddOpts = opts.into_serde().unwrap();
         let stream = self.stream.clone();
+        let size = size;
 
         wasm_bindgen_futures::future_to_promise(async move {
-            let mut header = tar::Header::new_old();
+            let mut header = tar::Header::new_ustar();
             header.set_path(path).unwrap();
             header.set_size(size as u64);
             opts.extend_header(EntryType::file(), &mut header);
@@ -115,14 +139,14 @@ impl StreamingTarPacker {
 
             JsFuture::from(reader.pipe_to(
                 &stream,
-                streams_sys::PipeOptions::new(true, false, false, None),
+                streams_sys::PipeOptions::new(true, true, true, None),
             ))
             .await
             .unwrap();
 
             let padding = 512 - (size % 512);
             let writer = stream.get_writer().unwrap();
-            if padding < 512 {
+            if padding > 0 {
                 JsFuture::from(
                     writer.write(
                         js_sys::Uint8Array::from(vec![0; padding as usize].as_slice()).into(),
@@ -131,10 +155,23 @@ impl StreamingTarPacker {
                 .await
                 .unwrap();
             }
-            JsFuture::from(writer.close()).await.unwrap();
             writer.release_lock();
 
             Ok(JsValue::UNDEFINED)
+        })
+    }
+
+    /// Finishes the pack and closes the writer. After this is called no other method may be called on the packer.
+    pub fn finish(self) -> js_sys::Promise {
+        let stream = self.stream;
+        wasm_bindgen_futures::future_to_promise(async move {
+            let writer = stream.get_writer().unwrap();
+            JsFuture::from(writer.write(js_sys::Uint8Array::from(vec![0; 1024].as_slice()).into()))
+                .await
+                .unwrap();
+            JsFuture::from(writer.close()).await.unwrap();
+            writer.release_lock();
+            Ok(JsValue::from(stream))
         })
     }
 }
